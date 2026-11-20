@@ -1,4 +1,4 @@
-// gl3: drawing a rectangle
+// gl2: drawing a triangle
 
 #include <cstddef>
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <print>
 #include <stdexcept>
-#include <string>
+#include <string_view>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -22,15 +22,9 @@
 class Gl final
 {
 	static constexpr auto VertexData{std::to_array<GLfloat>({
-		+0.5f, +0.5f, 0.0f, // top-right
-		+0.5f, -0.5f, 0.0f, // bottom-right
-		-0.5f, -0.5f, 0.0f, // bottom-left
-		-0.5f, +0.5f, 0.0f, // top-left
-	})};
-
-	static constexpr auto ElementData{std::to_array<GLuint>({
-		0, 1, 3, // 1st
-		1, 2, 3, // 2nd
+		-0.5, -0.5, 0.0, // bottom-left
+		+0.5, -0.5, 0.0, // bottom-right
+		+0.0, +0.5, 0.0, // top-center
 	})};
 
 	static constexpr std::string_view VertexShaderSource{
@@ -60,7 +54,6 @@ class Gl final
 	GLuint _program{};
 	GLuint _vertexArray{};
 	GLuint _vertexBuffer{};
-	GLuint _elementBuffer{};
 
 	static void CompileShader(GLuint shader)
 	{
@@ -159,10 +152,6 @@ public:
 		glBindBuffer(GL_ARRAY_BUFFER, _vertexBuffer);
 		glBufferData(GL_ARRAY_BUFFER, VertexData.size() * sizeof(GLfloat), VertexData.data(), GL_STATIC_DRAW);
 
-		glGenBuffers(1, &_elementBuffer);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _elementBuffer);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementData.size() * sizeof(GLuint), ElementData.data(), GL_STATIC_DRAW);
-
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, static_cast<void*>(0)); // tightly-packed
 		glEnableVertexAttribArray(0);
 	}
@@ -203,7 +192,7 @@ public:
 
 			glUseProgram(_program);
 			glBindVertexArray(_vertexArray);
-			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
 
 			SDL_GL_SwapWindow(_pWindow);
 		}

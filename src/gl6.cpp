@@ -1,6 +1,5 @@
-// gl4: color change using uniform buffer
+// gl6: loading a BMP image
 
-#include <cmath>
 #include <cstddef>
 
 #include <array>
@@ -10,7 +9,7 @@
 #include <memory>
 #include <print>
 #include <stdexcept>
-#include <string>
+#include <string_view>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -23,10 +22,10 @@
 class Gl final
 {
 	static constexpr auto VertexData{std::to_array<GLfloat>({
-		+0.5f, +0.5f, 0.0f, // top-right
-		+0.5f, -0.5f, 0.0f, // bottom-right
-		-0.5f, -0.5f, 0.0f, // bottom-left
-		-0.5f, +0.5f, 0.0f, // top-left
+		+0.5f, +0.5f, 0.0f, 1.0f, 1.0f, // top-right
+		+0.5f, -0.5f, 0.0f, 1.0f, 0.0f, // bottom-right
+		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f, // bottom-left
+		-0.5f, +0.5f, 0.0f, 0.0f, 1.0f, // top-left
 	})};
 
 	static constexpr auto ElementData{std::to_array<GLuint>({
@@ -38,9 +37,12 @@ class Gl final
 		R"(
 		#version 410 core
 		layout (location = 0) in vec3 InPosition;
+		layout (location = 1) in vec2 InUv;
+		out vec2 Uv;
 		void main()
 		{
 			gl_Position = vec4(InPosition, 1.0);
+			Uv = InUv;
 		}
 		)"
 	};
@@ -49,10 +51,11 @@ class Gl final
 		R"(
 		#version 410 core
 		out vec4 OutColor;
-		uniform vec4 Color;
+		in vec2 Uv;
+		uniform sampler2D Texture;
 		void main()
 		{
-			OutColor = Color;
+			OutColor = texture(Texture, Uv);
 		}
 		)"
 	};
@@ -60,6 +63,7 @@ class Gl final
 	SDL_Window* _pWindow{nullptr};
 	SDL_GLContext _context{nullptr};
 	GLuint _program{};
+	GLuint _texture{};
 	GLuint _vertexArray{};
 	GLuint _vertexBuffer{};
 	GLuint _elementBuffer{};
@@ -104,12 +108,6 @@ class Gl final
 		}
 	}
 
-	template<class T>
-	[[nodiscard]] static float Oscillate(T x, float speed) noexcept
-	{
-		return (std::sinf(static_cast<float>(x) * speed) + 1.0f) * 0.5f;
-	}
-
 public:
 	Gl()
 	{
@@ -140,7 +138,41 @@ public:
 		SDL_GL_MakeCurrent(_pWindow, _context);
 		SDL_GL_SetSwapInterval(1);
 
-		// initialize OpenGL
+		// initialize mostly OpenGL
+
+		SDL_Surface* pImage{SDL_LoadBMP("brick.bmp")};
+		if (!pImage)
+		{
+			SDL_GL_DestroyContext(_context);
+			SDL_DestroyWindow(_pWindow);
+			SDL_Quit();
+			throw std::runtime_error{std::format("SDL_LoadBMP - {}", SDL_GetError())};
+		}
+
+		SDL_Surface* pSurface{SDL_ConvertSurface(pImage, SDL_PIXELFORMAT_RGBA32)};
+		if (!pSurface)
+		{
+			SDL_DestroySurface(pImage);
+			SDL_GL_DestroyContext(_context);
+			SDL_DestroyWindow(_pWindow);
+			SDL_Quit();
+			throw std::runtime_error{std::format("SDL_ConvertSurface - {}", SDL_GetError())};
+		}
+
+		glActiveTexture(GL_TEXTURE0);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+		glGenTextures(1, &_texture);
+		glBindTexture(GL_TEXTURE_2D, _texture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pSurface->w, pSurface->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pSurface->pixels);
+		glGenerateMipmap(GL_TEXTURE_2D);
+
+		SDL_DestroySurface(pSurface);
+		SDL_DestroySurface(pImage);
 
 		const GLuint vertexShader{glCreateShader(GL_VERTEX_SHADER)};
 		const char* pVertexShaderSource{VertexShaderSource.data()};
@@ -171,8 +203,10 @@ public:
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _elementBuffer);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementData.size() * sizeof(GLuint), ElementData.data(), GL_STATIC_DRAW);
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, static_cast<void*>(0)); // tightly-packed
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), static_cast<void*>(0));
 		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), reinterpret_cast<void*>(3 * sizeof(GLfloat)));
+		glEnableVertexAttribArray(1);
 	}
 
 	~Gl()
@@ -209,10 +243,8 @@ public:
 			glClearColor(0.5, 0.5, 0.5, 1.0);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-			const GLint color{glGetUniformLocation(_program, "Color")};
-
 			glUseProgram(_program);
-			glUniform4f(color, 0.0f, 0.0f, Oscillate(SDL_GetTicks(), 0.005f), 1.0f);
+			glBindTexture(GL_TEXTURE_2D, _texture);
 			glBindVertexArray(_vertexArray);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 

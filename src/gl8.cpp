@@ -1,15 +1,20 @@
-// gl5: color gradient using vertex buffer
+// gl8: translation, rotation and scaling
 
 #include <cstddef>
 
 #include <array>
+#include <bit>
 #include <exception>
 #include <format>
 #include <iostream>
 #include <memory>
 #include <print>
 #include <stdexcept>
-#include <string>
+#include <string_view>
+
+#define GLM_FORCE_INLINE
+#include <glm/ext.hpp>
+#include <glm/glm.hpp>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -21,11 +26,19 @@
 
 class Gl final
 {
+	struct SdlDelete final
+	{
+		void operator()(SDL_Surface* pSurface) const noexcept
+		{
+			SDL_DestroySurface(pSurface);
+		}
+	};
+
 	static constexpr auto VertexData{std::to_array<GLfloat>({
-		+0.5f, +0.5f, 0.0f, 1.0f, 0.0f, 0.0f, // top-right
-		+0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, // bottom-right
-		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, // bottom-left
-		-0.5f, +0.5f, 0.0f, 0.0f, 0.0f, 0.0f, // top-left
+		+0.5f, +0.5f, 0.0f, 1.0f, 1.0f, // top-right
+		+0.5f, -0.5f, 0.0f, 1.0f, 0.0f, // bottom-right
+		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f, // bottom-left
+		-0.5f, +0.5f, 0.0f, 0.0f, 1.0f, // top-left
 	})};
 
 	static constexpr auto ElementData{std::to_array<GLuint>({
@@ -37,31 +50,34 @@ class Gl final
 		R"(
 		#version 410 core
 		layout (location = 0) in vec3 InPosition;
-		layout (location = 1) in vec3 InColor;
-		out vec3 Color;
+		layout (location = 1) in vec2 InUv;
+		out vec2 Uv;
+		uniform mat4 Transform;
 		void main()
 		{
-			gl_Position = vec4(InPosition, 1.0);
-			Color = InColor;
+			gl_Position = Transform * vec4(InPosition, 1.0);
+			Uv = InUv;
 		}
-		)"
-	};
+		)"};
 
 	static constexpr std::string_view FragmentShaderSource{
 		R"(
 		#version 410 core
 		out vec4 OutColor;
-		in vec3 Color;
+		in vec2 Uv;
+		uniform sampler2D TextureBrick;
+		uniform sampler2D TextureGraffiti;
 		void main()
 		{
-			OutColor = vec4(Color, 1.0);
+			OutColor = mix(texture(TextureBrick, Uv), texture(TextureGraffiti, Uv), 0.5);
 		}
-		)"
-	};
+		)"};
 
 	SDL_Window* _pWindow{nullptr};
 	SDL_GLContext _context{nullptr};
 	GLuint _program{};
+	GLuint _textureBrick{};
+	GLuint _textureGraffiti{};
 	GLuint _vertexArray{};
 	GLuint _vertexBuffer{};
 	GLuint _elementBuffer{};
@@ -106,6 +122,19 @@ class Gl final
 		}
 	}
 
+	[[nodiscard]] static std::unique_ptr<SDL_Surface, SdlDelete> LoadBmpImage(const char* pPath)
+	{
+		SDL_Surface* pImage{SDL_LoadBMP(pPath)};
+		if (pImage)
+		{
+			SDL_Surface* pConverted{SDL_ConvertSurface(pImage, SDL_PIXELFORMAT_RGBA32)};
+			SDL_DestroySurface(pImage);
+			if (pConverted && SDL_FlipSurface(pConverted, SDL_FLIP_VERTICAL))
+				return std::unique_ptr<SDL_Surface, SdlDelete>{pConverted};
+		}
+		return nullptr;
+	}
+
 public:
 	Gl()
 	{
@@ -136,7 +165,41 @@ public:
 		SDL_GL_MakeCurrent(_pWindow, _context);
 		SDL_GL_SetSwapInterval(1);
 
-		// initialize OpenGL
+		// initialize mostly OpenGL
+
+		const auto pBrick{LoadBmpImage("data/brick.bmp")};
+		const auto pGraffiti{LoadBmpImage("data/graffiti.bmp")};
+		if (!pBrick || !pGraffiti)
+		{
+			SDL_GL_DestroyContext(_context);
+			SDL_DestroyWindow(_pWindow);
+			SDL_Quit();
+			throw std::runtime_error{std::format("LoadBmpImage - {}", SDL_GetError())};
+		}
+
+		glActiveTexture(GL_TEXTURE0);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+		glGenTextures(1, &_textureBrick);
+		glBindTexture(GL_TEXTURE_2D, _textureBrick);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pBrick->w, pBrick->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pBrick->pixels);
+		glGenerateMipmap(GL_TEXTURE_2D);
+
+		glActiveTexture(GL_TEXTURE1);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+		glGenTextures(1, &_textureGraffiti);
+		glBindTexture(GL_TEXTURE_2D, _textureGraffiti);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pGraffiti->w, pGraffiti->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pGraffiti->pixels);
+		glGenerateMipmap(GL_TEXTURE_2D);
 
 		const GLuint vertexShader{glCreateShader(GL_VERTEX_SHADER)};
 		const char* pVertexShaderSource{VertexShaderSource.data()};
@@ -167,9 +230,9 @@ public:
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _elementBuffer);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementData.size() * sizeof(GLuint), ElementData.data(), GL_STATIC_DRAW);
 
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), static_cast<void*>(0));
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), static_cast<void*>(0));
 		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), reinterpret_cast<void*>(3 * sizeof(GLfloat)));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), std::bit_cast<void*>(3 * sizeof(GLfloat)));
 		glEnableVertexAttribArray(1);
 	}
 
@@ -180,9 +243,12 @@ public:
 		SDL_Quit();
 	}
 
-
 	void Run()
 	{
+		glUseProgram(_program);
+		glUniform1i(glGetUniformLocation(_program, "TextureBrick"), 0);
+		glUniform1i(glGetUniformLocation(_program, "TextureGraffiti"), 1);
+
 		bool running{true};
 		while (running)
 		{
@@ -207,7 +273,16 @@ public:
 			glClearColor(0.5, 0.5, 0.5, 1.0);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-			glUseProgram(_program);
+			glm::mat4 transform{1.0f};
+			transform = glm::translate(transform, glm::vec3{0.5f, 0.5f, 0.0f});
+			transform = glm::rotate(transform, static_cast<float>(SDL_GetTicks()), glm::vec3{0.0f, 0.0f, 1.0f});
+			transform = glm::scale(transform, glm::vec3{0.8f});
+			glUniformMatrix4fv(glGetUniformLocation(_program, "Transform"), 1, GL_FALSE, glm::value_ptr(transform));
+
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, _textureBrick);
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, _textureGraffiti);
 			glBindVertexArray(_vertexArray);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 

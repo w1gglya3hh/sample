@@ -20,8 +20,6 @@ int main()
 
 		if (!SDL_Init(SDL_INIT_VIDEO))
 			throw std::runtime_error{std::format("SDL_Init: {}", SDL_GetError())};
-		//if (!SDL_Vulkan_LoadLibrary(nullptr))
-		//	throw std::runtime_error{std::format("SDL_Vulkan_LoadLibrary: {}", SDL_GetError())};
 		SDL_Window* pWindow{SDL_CreateWindow("vksdldl", 800, 600, SDL_WINDOW_VULKAN)};
 		if (!pWindow)
 			throw std::runtime_error{std::format("SDL_CreateWindow: {}", SDL_GetError())};

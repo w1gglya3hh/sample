@@ -1,5 +1,6 @@
-// gl2: drawing a triangle
+// gl4: color change using uniform buffer
 
+#include <cmath>
 #include <cstddef>
 
 #include <array>
@@ -9,7 +10,7 @@
 #include <memory>
 #include <print>
 #include <stdexcept>
-#include <string>
+#include <string_view>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -22,9 +23,15 @@
 class Gl final
 {
 	static constexpr auto VertexData{std::to_array<GLfloat>({
-		-0.5, -0.5, 0.0, // bottom-left
-		+0.5, -0.5, 0.0, // bottom-right
-		+0.0, +0.5, 0.0, // top-center
+		+0.5f, +0.5f, 0.0f, // top-right
+		+0.5f, -0.5f, 0.0f, // bottom-right
+		-0.5f, -0.5f, 0.0f, // bottom-left
+		-0.5f, +0.5f, 0.0f, // top-left
+	})};
+
+	static constexpr auto ElementData{std::to_array<GLuint>({
+		0, 1, 3, // 1st
+		1, 2, 3, // 2nd
 	})};
 
 	static constexpr std::string_view VertexShaderSource{
@@ -42,9 +49,10 @@ class Gl final
 		R"(
 		#version 410 core
 		out vec4 OutColor;
+		uniform vec4 Color;
 		void main()
 		{
-			OutColor = vec4(0.0, 0.0, 1.0, 1.0);
+			OutColor = Color;
 		}
 		)"
 	};
@@ -54,6 +62,7 @@ class Gl final
 	GLuint _program{};
 	GLuint _vertexArray{};
 	GLuint _vertexBuffer{};
+	GLuint _elementBuffer{};
 
 	static void CompileShader(GLuint shader)
 	{
@@ -93,6 +102,12 @@ class Gl final
 			}
 			throw std::runtime_error{"glLinkProgram - unknown error"};
 		}
+	}
+
+	template<class T>
+	[[nodiscard]] static float Oscillate(T x, float speed) noexcept
+	{
+		return (std::sinf(static_cast<float>(x) * speed) + 1.0f) * 0.5f;
 	}
 
 public:
@@ -152,6 +167,10 @@ public:
 		glBindBuffer(GL_ARRAY_BUFFER, _vertexBuffer);
 		glBufferData(GL_ARRAY_BUFFER, VertexData.size() * sizeof(GLfloat), VertexData.data(), GL_STATIC_DRAW);
 
+		glGenBuffers(1, &_elementBuffer);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _elementBuffer);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, ElementData.size() * sizeof(GLuint), ElementData.data(), GL_STATIC_DRAW);
+
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, static_cast<void*>(0)); // tightly-packed
 		glEnableVertexAttribArray(0);
 	}
@@ -190,9 +209,12 @@ public:
 			glClearColor(0.5, 0.5, 0.5, 1.0);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+			const GLint color{glGetUniformLocation(_program, "Color")};
+
 			glUseProgram(_program);
+			glUniform4f(color, 0.0f, 0.0f, Oscillate(SDL_GetTicks(), 0.005f), 1.0f);
 			glBindVertexArray(_vertexArray);
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 			SDL_GL_SwapWindow(_pWindow);
 		}
